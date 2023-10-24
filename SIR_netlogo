@@ -1,34 +1,35 @@
-globals [
+globals[
   total_cost
+  test_period
+  prevention_cost_all
+  medical_cost_all
 ]
 
-turtles-own [
+turtles-own[
   latent_period
   infectious_period
   has_symptom?
   quarantine_period_left
   tested_positive?
 ]
-
 to setup
   clear-all
-  generate-small-world population network_k 0.1
-  ask turtles [
-    become-susceptible
+  generate-small-world population net_k 0.1
+  ask turtles[
     set tested_positive? false
-
+    set quarantine_period_left 0
+    become-susceptible
     ifelse random-float 1 < has_symptom_ratio
-    [ set has_symptom? true ]
-    [ set has_symptom? false ]
+    [set has_symptom? true]
+    [set has_symptom? false]
   ]
-
-  ask n-of num_initial_infection turtles [ become-infected ]
-
+  ask n-of num_initial_infection turtles [become-infected]
+  set test_period test_frq
   reset-ticks
 end
 
 to go
-  if not any? turtles with [infected?][ stop ]
+  if not any? turtles with [infected?][stop]
   random-walk
   virus-spread
   recover
@@ -37,57 +38,78 @@ to go
   tick
 end
 
-
-to quarantine
-  ; 鏈夌棁鐘堕殧绂�
-  if quarantine_symptom? [
-    ask turtles [
-      if infectious? and has_symptom? [
-        set quarantine_period_left quarantine_period_standard
-        set shape "triangle"
-      ]
-    ]
-  ]
-
-  if quarantine_positive? [
-    ask turtles [
-      if tested_positive? [
-        set quarantine_period_left quarantine_period_standard
-        set shape "triangle"
-      ]
-    ]
-  ]
-
-  ask turtles with [in_quarantine?][
-    set total_cost total_cost + cost_quarantine
-    set quarantine_period_left quarantine_period_left - 1
-    if quarantine_period_left <= 0 [
-      set shape "circle"
-    ]
-  ]
-end
-
-
-
 to test
-  if test_contacts? [
-    ; 妫€娴嬫墍鏈夊凡鐭ョ梾渚嬬殑瀵嗘帴
-    ask turtles with [ has_symptom? and infectious? ][
-      set total_cost total_cost + cost_test
-      set tested_positive? true
-      ask link-neighbors [
+  if test_contact? [
+    ask turtles [
+      if has_symptom? and infectious?[
         set total_cost total_cost + cost_test
-        if infected? [
+        set prevention_cost_all prevention_cost_all + cost_test
+        ifelse random-float 1 < fake_negative[
+          set tested_positive? false ][
           set tested_positive? true
+        ]
+        ask link-neighbors [
+          set total_cost total_cost + cost_test
+          set prevention_cost_all prevention_cost_all + cost_test
+          ifelse infected?[
+            ifelse random-float 1 < fake_negative[
+              set tested_positive? false ][
+              set tested_positive? true
+        ]
+          ][
+            ifelse random-float 1 < fake_positive[
+              set tested_positive? true ][
+              set tested_positive? false
+        ]
+          ]
         ]
       ]
     ]
   ]
 
-  if test_all? [
-    set total_cost total_cost + cost_test * count turtles
-    ask turtles with [ infected? ][
-      set tested_positive? true
+  ifelse test_period <= 1 [
+    if test_all? [
+      set total_cost total_cost + cost_test * count turtles
+      set prevention_cost_all prevention_cost_all + cost_test * count turtles
+      ask turtles with [infected?][
+        ifelse random-float 1 < fake_negative[
+          set tested_positive? false ][
+          set tested_positive? true
+        ]
+      ]
+      ask turtles with [not infected?][
+        ifelse random-float 1 < fake_positive[
+          set tested_positive? true ][
+          set tested_positive? false
+        ]
+      ]
+    ]
+    set test_period test_frq
+  ][
+    set test_period test_period - 1
+  ]
+end
+to quarantine
+  if quarantine_symptom? [
+    ask turtles with [infectious? and has_symptom?][
+      set quarantine_period_left quarantine_period_std
+      set shape "triangle"
+    ]
+  ]
+  if quarantine_positive?[
+    ask turtles [
+      if tested_positive?[
+       set quarantine_period_left quarantine_period_std
+       set shape "triangle"
+      ]
+    ]
+  ]
+  ask turtles with [in_quarantine?][
+    set total_cost total_cost + cost_quarantine
+    set prevention_cost_all prevention_cost_all + cost_quarantine
+    set  quarantine_period_left quarantine_period_left - 1
+    if quarantine_period_left <= 0 [
+      set shape "circle"
     ]
   ]
 end
@@ -97,11 +119,11 @@ to-report infectious?
 end
 
 to virus-spread
-  ; 涓嶈闅旂锛屼笖澶勪簬浼犳挱鏈熸墠浼犳挱
-  ask turtles with [infectious? and not in_quarantine? ][
-    if any? link-neighbors with [ susceptible? ][
-      ask link-neighbors with [ susceptible? ][
-        if random-float 1 < infection_rate [
+
+  ask turtles with [infected? and not in_quarantine?][
+    if any? link-neighbors with [susceptible?][
+      ask link-neighbors with [susceptible?][
+        if random-float 1 < infection_rate[
           become-infected
         ]
       ]
@@ -111,8 +133,9 @@ end
 
 to recover
   ask turtles with [infected?][
-    ifelse latent_period > 0
-    [
+    set total_cost total_cost + medical_cost
+    set medical_cost_all medical_cost_all + medical_cost
+    ifelse latent_period > 0[
       set latent_period latent_period - 1
     ][
       set infectious_period infectious_period - 1
@@ -120,8 +143,7 @@ to recover
 
     if infectious_period <= 0
     [
-      set tested_positive? false
-
+      ;set tested_positive? false
       ifelse random-float 1 < get_resistant_rate
       [ become-resistant ]
       [ become-susceptible ]
@@ -130,8 +152,8 @@ to recover
 end
 
 to random-walk
-  if not lockdown? [
-    ask one-of links [ re-link ]
+  if not lockdown[
+    ask one-of links [re-link]
   ]
 end
 
@@ -161,23 +183,22 @@ to-report resistant?
   report color = gray
 end
 
-
 to-report in_quarantine?
   report quarantine_period_left > 0
 end
 
-to generate-lattice [ n k ]
-  ; 鍒涘缓鐐�
-  crt n [ set shape "circle" setxy random-xcor random-ycor ]
+to generate-lattice [n k]
+
+  crt n [set shape "circle" setxy random-xcor random-ycor]
   ask turtles [
-    let k-neighbors sublist (sort-by [ [?1 ?2] -> distance ?1 < distance ?2 ] other turtles) 0 k
+    let k-neighbors sublist (sort-by [[?1 ?2] -> distance ?1 < distance ?2 ] other turtles) 0 k
     create-links-with (turtle-set k-neighbors)
   ]
 end
 
-to generate-small-world [ n k p ] ; n - population, k -nearest neighbors, p relink probability
+to generate-small-world [n k p] ;n - population,k - near neighbors, p -  relink prob
   generate-lattice n k
-  ask links [
+  ask links[
     if random-float 1 < p [
       re-link
     ]
@@ -186,50 +207,106 @@ end
 
 to re-link
   let selected_node one-of both-ends
-  ; 鍘熻竟鐨勫彟涓€涓鐐�
   let previous_node one-of both-ends with [self != selected_node]
-
-  ask selected_node [
-    ; 杩炴帴鍙︿竴涓柊鐨勭鐐癸紝鏂扮鐐逛笉鑳芥槸鍘熻竟鐨勭鐐�
-    let new_node one-of other turtles with [ self != previous_node ]
-    create-link-with new_node
-  ]
-  ; 鍒犻櫎鍘熸潵鐨勮竟
+  ask  selected_node [
+     let new_node one-of other turtles with [self != previous_node]
+     create-link-with new_node
+      ]
   die
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-183
+239
 10
-605
-433
+888
+660
 -1
 -1
-6.37
+15.63415
 1
-15
+10
 1
 1
 1
 0
-1
-1
-1
--32
-32
--32
-32
 0
 0
+1
+-20
+20
+-20
+20
+1
+1
 1
 ticks
 30.0
 
+SLIDER
+33
+57
+205
+90
+population
+population
+0
+1000
+580.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+32
+90
+204
+123
+num_initial_infection
+num_initial_infection
+0
+500
+100.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+32
+121
+204
+154
+infection_rate
+infection_rate
+0
+1
+0.7
+0.01
+1
+NIL
+HORIZONTAL
+
+SLIDER
+31
+185
+205
+218
+get_resistant_rate
+get_resistant_rate
+0
+1
+0.11
+0.01
+1
+NIL
+HORIZONTAL
+
 BUTTON
-12
-553
-79
-587
+474
+666
+540
+699
 NIL
 setup
 NIL
@@ -243,10 +320,10 @@ NIL
 1
 
 BUTTON
-83
-552
-147
-586
+569
+665
+632
+698
 NIL
 go
 T
@@ -259,71 +336,11 @@ NIL
 NIL
 1
 
-SLIDER
-7
-12
-180
-45
-population
-population
-0
-500
-500.0
-100
-1
-NIL
-HORIZONTAL
-
-SLIDER
-6
-49
-180
-82
-num_initial_infection
-num_initial_infection
-0
-100
-10.0
-1
-1
-NIL
-HORIZONTAL
-
-SLIDER
-6
-86
-179
-119
-infection_rate
-infection_rate
-0
-1
-0.1
-0.01
-1
-NIL
-HORIZONTAL
-
-SLIDER
-6
-123
-180
-156
-get_resistant_rate
-get_resistant_rate
-0
-1
-0.05
-0.01
-1
-NIL
-HORIZONTAL
-
 PLOT
-189
-445
-390
-595
+1043
+211
+1243
+361
 SIR
 NIL
 NIL
@@ -335,166 +352,166 @@ true
 false
 "" ""
 PENS
-"S" 1.0 0 -12087248 true "" "plot count turtles with [susceptible?]"
-"I" 1.0 0 -5298144 true "" "plot count turtles with [infected?]"
+"S" 1.0 0 -13840069 true "" "plot count turtles with [susceptible?]"
+"I" 1.0 0 -2674135 true "" "plot count turtles with [infected?]"
 "R" 1.0 0 -7500403 true "" "plot count turtles with [resistant?]"
 
 SLIDER
-618
+33
+24
+205
+57
+net_k
+net_k
+0
+20
+4.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+31
+153
+205
+186
+mean_latent_period
+mean_latent_period
+0
+10
+5.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
 30
-791
-64
-network_k
-network_k
-0
-10
-3.0
-1
-1
-NIL
-HORIZONTAL
-
-SLIDER
-5
-160
-181
-194
-mean_latent_period
-mean_latent_period
-0
-10
-3.0
-1
-1
-NIL
-HORIZONTAL
-
-SLIDER
-4
-195
-181
-229
+218
+207
+251
 mean_infectious_period
 mean_infectious_period
 0
 20
-10.0
+5.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-3
-230
-181
-264
+30
+250
+202
+283
 has_symptom_ratio
 has_symptom_ratio
 0
 1
-0.28
+0.42
 0.01
 1
 NIL
 HORIZONTAL
 
 SWITCH
-6
+28
+380
+217
+413
+quarantine_symptom?
+quarantine_symptom?
+0
+1
+-1000
+
+SWITCH
+27
+413
+223
+446
+quarantine_positive?
+quarantine_positive?
+1
+1
+-1000
+
+SWITCH
+26
+542
+174
+575
+test_contact?
+test_contact?
+0
+1
+-1000
+
+SWITCH
+28
+445
+148
+478
+test_all?
+test_all?
+0
+1
+-1000
+
+SLIDER
+28
+477
+200
+510
+test_frq
+test_frq
+0
+10
+1.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+29
 282
-180
-316
-quarantine_symptom?
-quarantine_symptom?
-0
-1
--1000
-
-SWITCH
-6
-317
-180
-351
-quarantine_positive?
-quarantine_positive?
-1
-1
--1000
-
-SWITCH
-5
-353
-153
-387
-test_contacts?
-test_contacts?
-1
-1
--1000
-
-SWITCH
-5
-390
-114
-424
-test_all?
-test_all?
-1
-1
--1000
-
-SLIDER
-4
-426
-177
-460
-test_freq
-test_freq
+201
+315
+cost_quarantine
+cost_quarantine
 0
 10
-1.0
+0.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-624
-195
-797
-229
-cost_quarantine
-cost_quarantine
-0
-10
-1.0
-1
-1
-NIL
-HORIZONTAL
-
-SLIDER
-624
-230
-797
-264
+28
+314
+200
+347
 cost_test
 cost_test
 0
 10
-0.1
+0.6
 0.1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-623
-270
-816
-304
-quarantine_period_standard
-quarantine_period_standard
+27
+509
+222
+542
+quarantine_period_std
+quarantine_period_std
 0
 100
 14.0
@@ -504,10 +521,10 @@ NIL
 HORIZONTAL
 
 PLOT
-393
-447
-594
-597
+1044
+46
+1244
+196
 total_cost
 NIL
 NIL
@@ -519,18 +536,65 @@ true
 false
 "" ""
 PENS
-"default" 1.0 0 -16777216 true "" "plot total_cost"
+"total_cost" 1.0 0 -16777216 true "" "plot total_cost"
+"prevention_cost_all" 1.0 0 -1184463 true "" "plot prevention_cost_all"
+"medical_cost" 1.0 0 -2674135 true "" "plot medical_cost_all"
 
 SWITCH
-4
-463
-128
-497
-lockdown?
-lockdown?
+24
+577
+137
+610
+lockdown
+lockdown
 1
 1
 -1000
+
+SLIDER
+28
+346
+200
+379
+medical_cost
+medical_cost
+0
+50
+2.1
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+1037
+449
+1209
+482
+fake_positive
+fake_positive
+0
+1
+0.01
+0.01
+1
+NIL
+HORIZONTAL
+
+SLIDER
+1037
+503
+1209
+536
+fake_negative
+fake_negative
+0
+1
+0.01
+0.01
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## WHAT IS IT?
@@ -874,70 +938,70 @@ false
 Polygon -7500403 true true 270 75 225 30 30 225 75 270
 Polygon -7500403 true true 30 75 75 30 270 225 225 270
 @#$#@#$#@
-NetLogo 6.2.2
+NetLogo 6.3.0
 @#$#@#$#@
 @#$#@#$#@
 @#$#@#$#@
 <experiments>
-  <experiment name="experiment" repetitions="2" runMetricsEveryStep="false">
+  <experiment name="experiment" repetitions="10" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
     <metric>ticks</metric>
     <metric>total_cost</metric>
+    <enumeratedValueSet variable="lockdown">
+      <value value="true"/>
+    </enumeratedValueSet>
     <enumeratedValueSet variable="get_resistant_rate">
-      <value value="0.05"/>
+      <value value="0.11"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="test_frq">
+      <value value="1"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="cost_test">
       <value value="0.1"/>
     </enumeratedValueSet>
-    <enumeratedValueSet variable="test_freq">
-      <value value="1"/>
-    </enumeratedValueSet>
     <enumeratedValueSet variable="population">
-      <value value="500"/>
+      <value value="580"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="test_contact?">
+      <value value="true"/>
+      <value value="false"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="quarantine_symptom?">
       <value value="true"/>
     </enumeratedValueSet>
-    <enumeratedValueSet variable="test_contacts?">
-      <value value="true"/>
-      <value value="false"/>
+    <enumeratedValueSet variable="quarantine_period_std">
+      <value value="14"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="num_initial_infection">
-      <value value="10"/>
+      <value value="100"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="quarantine_positive?">
       <value value="true"/>
       <value value="false"/>
     </enumeratedValueSet>
-    <enumeratedValueSet variable="network_k">
-      <value value="3"/>
-    </enumeratedValueSet>
-    <enumeratedValueSet variable="lockdown?">
-      <value value="false"/>
-    </enumeratedValueSet>
     <enumeratedValueSet variable="has_symptom_ratio">
-      <value value="0.28"/>
+      <value value="0.5"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="test_all?">
       <value value="false"/>
     </enumeratedValueSet>
-    <enumeratedValueSet variable="quarantine_period_standard">
-      <value value="14"/>
-    </enumeratedValueSet>
-    <enumeratedValueSet variable="mean_infectious_period">
-      <value value="10"/>
+    <enumeratedValueSet variable="net_k">
+      <value value="4"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="cost_quarantine">
       <value value="1"/>
     </enumeratedValueSet>
+    <enumeratedValueSet variable="mean_infectious_period">
+      <value value="5"/>
+    </enumeratedValueSet>
     <enumeratedValueSet variable="mean_latent_period">
-      <value value="3"/>
+      <value value="5"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="infection_rate">
-      <value value="0.1"/>
-      <value value="0.3"/>
-      <value value="0.5"/>
+      <value value="0.9"/>
+      <value value="0.8"/>
+      <value value="0.7"/>
     </enumeratedValueSet>
   </experiment>
 </experiments>
