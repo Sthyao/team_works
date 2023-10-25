@@ -3,6 +3,7 @@ globals[
   test_period
   prevention_cost_all
   medical_cost_all
+  lockdown_days
 ]
 
 turtles-own[
@@ -11,6 +12,7 @@ turtles-own[
   has_symptom?
   quarantine_period_left
   tested_positive?
+  if_tested?
 ]
 to setup
   clear-all
@@ -22,6 +24,7 @@ to setup
     ifelse random-float 1 < has_symptom_ratio
     [set has_symptom? true]
     [set has_symptom? false]
+    set if_tested? false
   ]
   ask n-of num_initial_infection turtles [become-infected]
   set test_period test_frq
@@ -29,26 +32,29 @@ to setup
 end
 
 to go
-  if not any? turtles with [infected?][stop]
+  if not any? turtles with [infected?] and not any? turtles with [quarantine_period_left > 0] [stop]                    ;停止的条件也不合理，应该设为没有被隔离的人，且没有被感染的人，且没有阳性患者
   random-walk
   virus-spread
   recover
   test
+  act-lockdown
   quarantine
   tick
 end
 
 to test
-  if test_contact? [
+  if test_contact? [                                          ;检测有症状的在传染期的，并且检测其邻居
     ask turtles [
       if has_symptom? and infectious?[
+        set if_tested? True
         set total_cost total_cost + cost_test
         set prevention_cost_all prevention_cost_all + cost_test
         ifelse random-float 1 < fake_negative[
           set tested_positive? false ][
           set tested_positive? true
         ]
-        ask link-neighbors [
+        ask link-neighbors with [not has_symptom? or not infectious? and not if_tested?][                                          ;重复计算啦
+          set if_tested? True
           set total_cost total_cost + cost_test
           set prevention_cost_all prevention_cost_all + cost_test
           ifelse infected?[
@@ -67,20 +73,46 @@ to test
     ]
   ]
 
-  ifelse test_period <= 1 [
-    if test_all? [
-      set total_cost total_cost + cost_test * count turtles
-      set prevention_cost_all prevention_cost_all + cost_test * count turtles
-      ask turtles with [infected?][
-        ifelse random-float 1 < fake_negative[
-          set tested_positive? false ][
-          set tested_positive? true
-        ]
+  if test_quarantine? [                                ;检测处在隔离期的       ;重复计算啦
+    ask turtles with [not if_tested?] [
+      set if_tested? True
+      set total_cost total_cost + cost_test
+      set prevention_cost_all prevention_cost_all + cost_test
+      ask turtles with [quarantine_period_left > 0][
+        set tested_positive? if-positive?
       ]
-      ask turtles with [not infected?][
-        ifelse random-float 1 < fake_positive[
-          set tested_positive? true ][
-          set tested_positive? false
+    ]
+  ]
+
+  if test_positive? [                                  ;检测目前状态是阳性的人      ;重复计算啦
+    ask turtles with [not if_tested?] [
+      set if_tested? True
+      set total_cost total_cost + cost_test
+      set prevention_cost_all prevention_cost_all + cost_test
+      ask turtles with [tested_positive?][
+        set tested_positive? if-positive?
+      ]
+    ]
+  ]
+
+
+  ifelse test_period <= 1 or if-lockdown?[
+    if test_all? [
+      ask turtles with [not if_tested?][
+        set if_tested? True
+        set total_cost total_cost + cost_test
+        set prevention_cost_all prevention_cost_all + cost_test
+        ask turtles with [infected?][
+          ifelse random-float 1 < fake_negative[
+            set tested_positive? false ][
+            set tested_positive? true
+          ]
+        ]
+        ask turtles with [not infected?][
+          ifelse random-float 1 < fake_positive[
+            set tested_positive? true ][
+            set tested_positive? false
+          ]
         ]
       ]
     ]
@@ -88,22 +120,58 @@ to test
   ][
     set test_period test_period - 1
   ]
+
+  ask turtles [
+    set if_tested? False
+  ]
 end
+
+to-report if-positive?
+  if infected?[
+    ifelse random-float 1 < fake_negative[
+      report false ][
+      report true
+    ]
+  ]
+  if not infected?[
+    ifelse random-float 1 < fake_positive[
+      report true ][
+      report false
+    ]
+  ]
+end
+
+to act-lockdown
+  if if-lockdown?[
+    set lockdown_days lockdown_days + 1
+  ]
+  if lockdown and count turtles with [tested_positive?] / population > lockdown_rate [
+    ask turtles with [quarantine_period_left <= lockdown_period][
+      set quarantine_period_left lockdown_period
+      set shape "triangle"
+    ]
+  ]
+end
+
+to-report if-lockdown?
+  report not any? turtles with [quarantine_period_left <= 0]
+end
+
 to quarantine
-  if quarantine_symptom? [
-    ask turtles with [infectious? and has_symptom?][
+  if quarantine_symptom? [                                   ;这里刷新了隔离期，是否应该针对非隔离期人口
+    ask turtles with [infectious? and has_symptom? and not in_quarantine?][
       set quarantine_period_left quarantine_period_std
       set shape "triangle"
     ]
   ]
+
   if quarantine_positive?[
-    ask turtles [
-      if tested_positive?[
-       set quarantine_period_left quarantine_period_std
-       set shape "triangle"
-      ]
+    ask turtles with [tested_positive? and not in_quarantine?][
+      set quarantine_period_left quarantine_period_std
+      set shape "triangle"
     ]
   ]
+
   ask turtles with [in_quarantine?][
     set total_cost total_cost + cost_quarantine
     set prevention_cost_all prevention_cost_all + cost_quarantine
@@ -114,13 +182,12 @@ to quarantine
   ]
 end
 
-to-report infectious?
+to-report infectious?                                        ;是否是在传染期内
   report latent_period <= 0 and infectious_period > 0
 end
 
 to virus-spread
-
-  ask turtles with [infected? and not in_quarantine?][
+  ask turtles with [infected? and not in_quarantine?][               ;潜伏期是可以传染的吗？？
     if any? link-neighbors with [susceptible?][
       ask link-neighbors with [susceptible?][
         if random-float 1 < infection_rate[
@@ -132,9 +199,11 @@ to virus-spread
 end
 
 to recover
-  ask turtles with [infected?][
+  ask turtles with [has_symptom? and infectious?][      ;这里增加成本的的应该是，有症状且在传染期，或者是阳性且有症状且在传染期
     set total_cost total_cost + medical_cost
     set medical_cost_all medical_cost_all + medical_cost
+  ]
+  ask turtles with [infected?][
     ifelse latent_period > 0[
       set latent_period latent_period - 1
     ][
@@ -143,7 +212,7 @@ to recover
 
     if infectious_period <= 0
     [
-      ;set tested_positive? false
+      ;set tested_positive? false                             ;这里直接设定其实并不合理，因为缺少检测过程
       ifelse random-float 1 < get_resistant_rate
       [ become-resistant ]
       [ become-susceptible ]
@@ -152,8 +221,17 @@ to recover
 end
 
 to random-walk
-  if not lockdown[
-    ask one-of links [re-link]
+;  if not if-lockdown?[
+;    ask one-of links [re-link]
+;  ]
+
+  if not if-lockdown?[
+    ask one-of links [die]
+    let selected_node_1 one-of turtles with [quarantine_period_left <= 0]
+    let selected_node_2 one-of turtles with [quarantine_period_left <= 0 and self != selected_node_1]
+    ask selected_node_1[
+      create-link-with selected_node_2
+    ]
   ]
 end
 
@@ -251,7 +329,7 @@ population
 population
 0
 1000
-580.0
+1000.0
 1
 1
 NIL
@@ -266,7 +344,7 @@ num_initial_infection
 num_initial_infection
 0
 500
-100.0
+35.0
 1
 1
 NIL
@@ -281,7 +359,7 @@ infection_rate
 infection_rate
 0
 1
-0.7
+0.4
 0.01
 1
 NIL
@@ -296,7 +374,7 @@ get_resistant_rate
 get_resistant_rate
 0
 1
-0.11
+0.1
 0.01
 1
 NIL
@@ -365,7 +443,7 @@ net_k
 net_k
 0
 20
-4.0
+5.0
 1
 1
 NIL
@@ -380,7 +458,7 @@ mean_latent_period
 mean_latent_period
 0
 10
-5.0
+3.0
 1
 1
 NIL
@@ -395,7 +473,7 @@ mean_infectious_period
 mean_infectious_period
 0
 20
-5.0
+7.0
 1
 1
 NIL
@@ -410,7 +488,7 @@ has_symptom_ratio
 has_symptom_ratio
 0
 1
-0.42
+0.5
 0.01
 1
 NIL
@@ -434,7 +512,7 @@ SWITCH
 446
 quarantine_positive?
 quarantine_positive?
-1
+0
 1
 -1000
 
@@ -456,7 +534,7 @@ SWITCH
 478
 test_all?
 test_all?
-0
+1
 1
 -1000
 
@@ -469,7 +547,7 @@ test_frq
 test_frq
 0
 10
-1.0
+7.0
 1
 1
 NIL
@@ -484,7 +562,7 @@ cost_quarantine
 cost_quarantine
 0
 10
-0.0
+5.0
 1
 1
 NIL
@@ -499,7 +577,7 @@ cost_test
 cost_test
 0
 10
-0.6
+1.0
 0.1
 1
 NIL
@@ -560,41 +638,177 @@ medical_cost
 medical_cost
 0
 50
-2.1
+15.0
 0.1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-1037
-449
-1209
-482
+1071
+486
+1243
+519
 fake_positive
 fake_positive
 0
 1
-0.01
+0.2
 0.01
 1
 NIL
 HORIZONTAL
 
 SLIDER
-1037
-503
-1209
-536
+1071
+520
+1243
+553
 fake_negative
 fake_negative
 0
 1
-0.01
+0.2
 0.01
 1
 NIL
 HORIZONTAL
+
+SLIDER
+24
+611
+196
+644
+lockdown_rate
+lockdown_rate
+0
+1
+0.4
+0.01
+1
+NIL
+HORIZONTAL
+
+SLIDER
+23
+647
+195
+680
+lockdown_period
+lockdown_period
+0
+20
+7.0
+1
+1
+NIL
+HORIZONTAL
+
+MONITOR
+901
+227
+991
+272
+NIL
+if-lockdown?
+17
+1
+11
+
+PLOT
+1046
+570
+1246
+720
+positive_rate
+NIL
+NIL
+0.0
+1.0
+0.0
+1.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot count turtles with [tested_positive?] / population"
+
+MONITOR
+902
+369
+1153
+414
+NIL
+count turtles with [tested_positive?]
+17
+1
+11
+
+SWITCH
+23
+682
+200
+715
+test_quarantine?
+test_quarantine?
+0
+1
+-1000
+
+SWITCH
+213
+682
+376
+715
+test_positive?
+test_positive?
+0
+1
+-1000
+
+MONITOR
+903
+421
+1219
+466
+NIL
+count turtles with [quarantine_period_left > 0]
+17
+1
+11
+
+MONITOR
+901
+278
+998
+323
+NIL
+lockdown_days
+17
+1
+11
+
+MONITOR
+903
+476
+1000
+521
+NIL
+count turtles
+17
+1
+11
+
+MONITOR
+904
+531
+989
+576
+NIL
+count links
+17
+1
+11
 
 @#$#@#$#@
 ## WHAT IS IT?
